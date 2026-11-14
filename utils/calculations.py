@@ -499,3 +499,156 @@ def get_daily_staffing_trend(
     )
 
     return daily
+
+
+# ==============================================================================
+# SECTION 7: LINEAR REGRESSION & PREDICTIVE ANALYTICS
+# ==============================================================================
+
+def train_census_linear_regression(
+    df_daily_staffing: pd.DataFrame,
+    department: Union[str, List[str]] = "All",
+    forecast_days: int = 14
+) -> Dict[str, Any]:
+    """
+    Fits an Ordinary Least Squares (OLS) Linear Regression model to daily census time series.
+    Evaluates in-sample performance (R², MAE, RMSE, Slope) and projects future patient census
+    for `forecast_days` days ahead.
+
+    Returns a dictionary containing:
+    - "combined_df": pd.DataFrame with Date, Actual_Census, Fitted_Census, Type ("Historical" or "Forecast")
+    - "historical_df": pd.DataFrame of historical actual vs fitted
+    - "forecast_df": pd.DataFrame of out-of-sample future projections
+    - "metrics": Dict of evaluation metrics (r2, mae, rmse, slope, intercept, current_census, projected_census)
+    - "model": fitted LinearRegression object
+    - "min_date": reference baseline date
+    """
+    if df_daily_staffing.empty:
+        return {
+            "combined_df": pd.DataFrame(),
+            "historical_df": pd.DataFrame(),
+            "forecast_df": pd.DataFrame(),
+            "metrics": {
+                "r2": 0.0,
+                "mae": 0.0,
+                "rmse": 0.0,
+                "slope": 0.0,
+                "intercept": 0.0,
+                "current_census": 0,
+                "projected_census": 0,
+                "data_points": 0,
+                "forecast_days": forecast_days
+            },
+            "model": None,
+            "min_date": None
+        }
+
+    df = df_daily_staffing.copy()
+    if department is not None:
+        if isinstance(department, str) and department != "All":
+            df = df[df["Department"] == department]
+        elif isinstance(department, (list, tuple)) and len(department) > 0 and "All" not in department:
+            df = df[df["Department"].isin(department)]
+
+    if df.empty:
+        return {
+            "combined_df": pd.DataFrame(),
+            "historical_df": pd.DataFrame(),
+            "forecast_df": pd.DataFrame(),
+            "metrics": {
+                "r2": 0.0,
+                "mae": 0.0,
+                "rmse": 0.0,
+                "slope": 0.0,
+                "intercept": 0.0,
+                "current_census": 0,
+                "projected_census": 0,
+                "data_points": 0,
+                "forecast_days": forecast_days
+            },
+            "model": None,
+            "min_date": None
+        }
+
+    daily = df.groupby("Date").agg(
+        Actual_Census=("Daily_Patient_Census", "sum")
+    ).reset_index().sort_values("Date")
+
+    if len(daily) < 2:
+        return {
+            "combined_df": daily,
+            "historical_df": daily,
+            "forecast_df": pd.DataFrame(),
+            "metrics": {
+                "r2": 0.0,
+                "mae": 0.0,
+                "rmse": 0.0,
+                "slope": 0.0,
+                "intercept": 0.0,
+                "current_census": int(daily["Actual_Census"].iloc[-1]) if not daily.empty else 0,
+                "projected_census": int(daily["Actual_Census"].iloc[-1]) if not daily.empty else 0,
+                "data_points": len(daily),
+                "forecast_days": forecast_days
+            },
+            "model": None,
+            "min_date": daily["Date"].min() if not daily.empty else None
+        }
+
+    min_date = daily["Date"].min()
+    X = (daily["Date"] - min_date).dt.days.values.reshape(-1, 1)
+    y = daily["Actual_Census"].values
+
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+    model = LinearRegression()
+    model.fit(X, y)
+    y_pred = model.predict(X)
+
+    r2 = float(r2_score(y, y_pred))
+    mae = float(mean_absolute_error(y, y_pred))
+    rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
+    slope = float(model.coef_[0])
+    intercept = float(model.intercept_)
+
+    daily["Fitted_Census"] = np.round(y_pred, 1)
+    daily["Type"] = "Historical"
+
+    # Future Forecasting
+    last_date = daily["Date"].max()
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days, freq="D")
+    X_future = (future_dates - min_date).days.values.reshape(-1, 1)
+    y_future = model.predict(X_future)
+    y_future_bounded = np.maximum(0, np.round(y_future, 1))
+
+    forecast_df = pd.DataFrame({
+        "Date": future_dates,
+        "Actual_Census": np.nan,
+        "Fitted_Census": y_future_bounded,
+        "Type": "Forecast"
+    })
+
+    combined_df = pd.concat([daily, forecast_df], ignore_index=True)
+
+    current_census = int(round(daily["Actual_Census"].iloc[-1]))
+    projected_census = int(round(forecast_df["Fitted_Census"].iloc[-1])) if not forecast_df.empty else current_census
+
+    return {
+        "combined_df": combined_df,
+        "historical_df": daily,
+        "forecast_df": forecast_df,
+        "metrics": {
+            "r2": round(r2, 4),
+            "mae": round(mae, 2),
+            "rmse": round(rmse, 2),
+            "slope": round(slope, 3),
+            "intercept": round(intercept, 2),
+            "current_census": current_census,
+            "projected_census": projected_census,
+            "data_points": len(daily),
+            "forecast_days": forecast_days
+        },
+        "model": model,
+        "min_date": min_date
+    }
+

@@ -425,3 +425,81 @@ def create_area_chart(
     ))
 
     return _apply_standard_layout(fig, title, x_title, y_title, height=height, show_legend=False)
+
+
+# ==============================================================================
+# 8. LINEAR REGRESSION FORECAST CHART
+# ==============================================================================
+
+def create_regression_forecast_chart(
+    historical_df: pd.DataFrame,
+    forecast_df: pd.DataFrame,
+    title: str = "Patient Census Trend & Linear Regression Forecast",
+    x_title: Optional[str] = "Date",
+    y_title: Optional[str] = "Patient Census",
+    height: int = 420
+) -> go.Figure:
+    """
+    Renders an interactive multi-trace chart showing:
+    - Actual historical census (points + smooth curve)
+    - OLS Linear Regression fitted trendline (dashed line across historical data)
+    - Future projected forecast (amber highlighted line with markers)
+    - Vertical transition line separating history from forecast
+    """
+    if historical_df.empty:
+        return _create_empty_figure(title)
+
+    fig = go.Figure()
+
+    # 1. Actual Historical Observations
+    fig.add_trace(go.Scatter(
+        x=historical_df["Date"],
+        y=historical_df["Actual_Census"],
+        mode="lines+markers",
+        name="Actual Census",
+        line={"color": "#38BDF8", "width": 2},
+        marker={"size": 4, "color": "#38BDF8", "opacity": 0.8},
+        hovertemplate="<b>%{x|%b %d, %Y}</b><br>Actual Census: <b>%{y:,.0f}</b><extra></extra>"
+    ))
+
+    # 2. Fitted OLS Line on Historical Data
+    if "Fitted_Census" in historical_df.columns:
+        fig.add_trace(go.Scatter(
+            x=historical_df["Date"],
+            y=historical_df["Fitted_Census"],
+            mode="lines",
+            name="OLS Fitted Trend",
+            line={"color": "#94A3B8", "width": 2, "dash": "dot"},
+            hovertemplate="<b>%{x|%b %d, %Y}</b><br>Fitted Trend: <b>%{y:,.1f}</b><extra></extra>"
+        ))
+
+    # 3. Forecast Projections
+    if not forecast_df.empty and "Fitted_Census" in forecast_df.columns:
+        # Connect last historical fitted point to first forecast point for seamless continuity
+        connect_x = [historical_df["Date"].iloc[-1]] + list(forecast_df["Date"])
+        connect_y = [historical_df["Fitted_Census"].iloc[-1]] + list(forecast_df["Fitted_Census"])
+
+        fig.add_trace(go.Scatter(
+            x=connect_x,
+            y=connect_y,
+            mode="lines+markers",
+            name="Projected Forecast",
+            line={"color": "#F59E0B", "width": 3, "dash": "dash"},
+            marker={"size": 6, "color": "#F59E0B", "symbol": "diamond"},
+            hovertemplate="<b>%{x|%b %d, %Y}</b><br>Projected: <b>%{y:,.1f}</b><extra></extra>"
+        ))
+
+        # Add vertical dividing line indicating forecast inception
+        split_date = historical_df["Date"].iloc[-1]
+        fig.add_vline(
+            x=split_date,
+            line_width=1.5,
+            line_dash="dash",
+            line_color="#EF4444",
+            annotation_text="Forecast Start",
+            annotation_position="top left",
+            annotation_font={"size": 11, "color": "#FCA5A5"}
+        )
+
+    return _apply_standard_layout(fig, title, x_title, y_title, height=height, show_legend=True)
+
